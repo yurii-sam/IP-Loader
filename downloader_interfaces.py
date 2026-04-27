@@ -56,7 +56,7 @@ class DownloadWorker(QRunnable):
                 if save_path.exists():
                     with open(soi_file, "w", encoding="utf-8") as f:
                         f.write(
-                            f"<html><body><h1>SOI Print: {identifier}</h1><p>Date: 2026-04-27</p><p>Operation 10: Mock text for diffing.</p></body></html>")
+                            f"<html>\n<body>\n<h1>SOI Print: {identifier}</h1>\n<p>Date: 2026-04-27</p>\n<p>Operation 10: Mock text for diffing.</p>\n</body>\n</html>")
 
             elif self.task_type == "IRM":
                 # TODO: Fetch the 3D PDF binary

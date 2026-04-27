@@ -1,7 +1,12 @@
 import sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication, QFileSystemModel, QFileDialog, QDialog
-from PySide6.QtCore import QThreadPool, QFile, QDir, QStandardPaths, QFileInfo, QUrl
+from PySide6.QtWidgets import (
+    QApplication, QFileSystemModel, QFileDialog, QDialog,
+    QMenu, QMessageBox  # <-- Add these two
+)
+from PySide6.QtCore import (
+    QThreadPool, QFile, QDir, QStandardPaths, QFileInfo, QUrl, Qt # <-- Add Qt
+)
 from PySide6.QtGui import QDesktopServices, QPalette
 from PySide6.QtUiTools import QUiLoader
 
@@ -16,6 +21,9 @@ from dialog_controllers import (
     LoadSoiDialogController,
     CompareSoiDialogController
 )
+import csv
+import openpyxl
+from PySide6.QtWidgets import QTableWidgetItem
 
 
 class ApplicationController:
@@ -65,7 +73,6 @@ class ApplicationController:
         self.window.actionLoadSOI.setIcon(qta.icon('ph.cloud-arrow-down', color=icon_color))
         self.window.actionCompareSOI.setIcon(qta.icon('ph.git-diff', color=icon_color))
 
-
     def setup_models(self):
         # Create a default active project so the workspace isn't empty on launch
         default_project = self.project_mgr.create_new_project()
@@ -75,6 +82,9 @@ class ApplicationController:
 
         self.window.treeView.setModel(self.file_system_model)
         self.window.treeView.setRootIndex(self.file_system_model.index(str(default_project)))
+
+        # Tell the tree view to emit a signal on right-click
+        self.window.treeView.setContextMenuPolicy(Qt.CustomContextMenu)
 
         # Hide size, type, and date columns
         self.window.treeView.setHeaderHidden(True)
@@ -100,7 +110,68 @@ class ApplicationController:
         self.window.actionLoadSOI.triggered.connect(self.handle_load_soi)
         self.window.actionCompareSOI.triggered.connect(self.handle_compare_soi)
         self.window.treeView.clicked.connect(self.handle_file_selection)
+        self.window.treeView.customContextMenuRequested.connect(self.show_tree_context_menu)
         self.window.btnOpenPdf.clicked.connect(self.open_external_pdf)
+
+    def show_tree_context_menu(self, pos):
+        # Find out what item is under the mouse cursor
+        index = self.window.treeView.indexAt(pos)
+
+        # If the user right-clicked empty space, do nothing
+        if not index.isValid():
+            return
+
+        file_path = self.file_system_model.filePath(index)
+        file_info = QFileInfo(file_path)
+
+        # Create the menu
+        menu = QMenu(self.window)
+        action_open_sys = menu.addAction("Open in File Explorer")
+        menu.addSeparator()  # Visual divider
+        action_delete = menu.addAction("Delete")
+
+        # Map the widget coordinates to global screen coordinates so the menu spawns correctly
+        global_pos = self.window.treeView.viewport().mapToGlobal(pos)
+
+        # Execute the menu and halt until the user clicks something or clicks away
+        selected_action = menu.exec(global_pos)
+
+        if selected_action == action_open_sys:
+            # If they clicked a file, open its parent folder. If it's a directory, open it directly.
+            dir_to_open = file_info.absoluteFilePath() if file_info.isDir() else file_info.absolutePath()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(dir_to_open))
+
+        elif selected_action == action_delete:
+            self.delete_item_safely(file_path, file_info)
+
+    def delete_item_safely(self, file_path, file_info):
+        # Never delete files without a confirmation trap
+        reply = QMessageBox.question(
+            self.window,
+            "Confirm Delete",
+            f"Are you sure you want to permanently delete:\n{file_info.fileName()}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No  # Default to 'No' so hitting Enter doesn't accidentally wipe data
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                if file_info.isDir():
+                    # removeRecursively wipes the folder and everything inside it
+                    QDir(file_path).removeRecursively()
+                else:
+                    QFile.remove(file_path)
+
+                self.log(f"Deleted: {file_info.fileName()}")
+
+                # If they deleted the file they were actively previewing, clear the preview pane
+                if self.current_preview_path == file_path:
+                    self.window.previewStack.setCurrentIndex(0)
+                    self.window.htmlPreviewer.setHtml("<h2>File Deleted</h2>")
+                    self.current_preview_path = None
+
+            except Exception as e:
+                self.log(f"Failed to delete {file_info.fileName()}: {str(e)}")
 
     def log(self, message):
         self.window.logOutput.append(message)
@@ -250,7 +321,6 @@ class ApplicationController:
         extension = file_info.suffix().lower()
 
         if extension == "html":
-            # Switch to HTML page (index 0)
             self.window.previewStack.setCurrentIndex(0)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -259,14 +329,79 @@ class ApplicationController:
                 self.window.htmlPreviewer.setPlainText(f"Error reading HTML:\n{str(e)}")
 
         elif extension == "pdf":
-            # Switch to PDF page (index 1)
             self.window.previewStack.setCurrentIndex(1)
             self.window.labelPdfNotice.setText(f"<b>3D PDF Selected:</b><br>{file_info.fileName()}")
 
+        elif extension == "csv":
+            self.window.previewStack.setCurrentIndex(2)
+            self.window.labelDataNotice.setText(f"Previewing CSV: {file_info.fileName()} (First 500 rows)")
+            self.preview_csv(file_path)
+
+        elif extension in ["xlsx", "xls"]:
+            self.window.previewStack.setCurrentIndex(2)
+            self.window.labelDataNotice.setText(f"Previewing Excel: {file_info.fileName()} (First 500 rows)")
+            self.preview_excel(file_path)
+
         else:
-            # Fallback for unexpected files
             self.window.previewStack.setCurrentIndex(0)
             self.window.htmlPreviewer.setHtml(f"<h2>File Selected</h2><p>{file_info.fileName()}</p>")
+
+    def preview_csv(self, file_path):
+        self.window.dataPreviewTable.clear()
+        self.window.dataPreviewTable.setRowCount(0)
+        self.window.dataPreviewTable.setColumnCount(0)
+
+        try:
+            with open(file_path, mode='r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                data = list(reader)
+
+                if not data:
+                    return
+
+                # Cap at 500 to prevent GUI lockups
+                preview_data = data[:500]
+
+                self.window.dataPreviewTable.setColumnCount(len(preview_data[0]))
+                self.window.dataPreviewTable.setRowCount(len(preview_data))
+
+                for row_idx, row_data in enumerate(preview_data):
+                    for col_idx, cell_data in enumerate(row_data):
+                        self.window.dataPreviewTable.setItem(row_idx, col_idx, QTableWidgetItem(str(cell_data)))
+        except Exception as e:
+            self.log(f"Failed to preview CSV: {str(e)}")
+
+    def preview_excel(self, file_path):
+        self.window.dataPreviewTable.clear()
+        self.window.dataPreviewTable.setRowCount(0)
+        self.window.dataPreviewTable.setColumnCount(0)
+
+        try:
+            # read_only mode is critical here for performance on large files
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            sheet = wb.active
+
+            data = []
+            for row in sheet.iter_rows(values_only=True, max_row=500):
+                data.append(row)
+
+            if not data:
+                return
+
+            # Find the widest row in case the data is jagged
+            max_cols = max(len(r) for r in data if r)
+            self.window.dataPreviewTable.setColumnCount(max_cols)
+            self.window.dataPreviewTable.setRowCount(len(data))
+
+            for row_idx, row_data in enumerate(data):
+                if not row_data:
+                    continue
+                for col_idx, cell_data in enumerate(row_data):
+                    val = str(cell_data) if cell_data is not None else ""
+                    self.window.dataPreviewTable.setItem(row_idx, col_idx, QTableWidgetItem(val))
+
+        except Exception as e:
+            self.log(f"Failed to preview Excel file: {str(e)}")
 
     def open_external_pdf(self):
         if self.current_preview_path:

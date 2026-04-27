@@ -12,6 +12,51 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QFile, Qt
 from PySide6.QtUiTools import QUiLoader
 
+import difflib
+from html import escape
+from PySide6.QtWidgets import (
+    QTableWidgetItem, QHeaderView, QListWidgetItem, QDialogButtonBox,
+    QFileDialog, QMessageBox, QWidget, QApplication
+)
+from PySide6.QtGui import QPainter, QColor, QPalette
+from PySide6.QtCore import QFile, Qt
+from PySide6.QtUiTools import QUiLoader
+
+
+class DiffRuler(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(12)
+        self.changes = []
+        self.total_lines = 1
+
+    def update_data(self, changes, total_lines):
+        self.changes = changes
+        self.total_lines = max(1, total_lines)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        # Check theme to set the track background color
+        is_dark = self.palette().color(QPalette.WindowText).lightness() > self.palette().color(
+            QPalette.Window).lightness()
+        bg_color = QColor("#2b2b2b") if is_dark else QColor("#f0f0f0")
+        painter.fillRect(self.rect(), bg_color)
+
+        h = self.height()
+        for change_type, line_idx in self.changes:
+            y = int((line_idx / self.total_lines) * h)
+
+            if change_type == 'delete':
+                color = QColor("#ef9a9a")
+            elif change_type == 'insert':
+                color = QColor("#a5d6a7")
+            else:
+                color = QColor("#ffcc80")
+
+            painter.fillRect(0, y, self.width(), 4, color)
+
 
 class LoadIpDialogController:
     def __init__(self, parent=None):
@@ -227,6 +272,72 @@ class LoadSoiDialogController:
         return self.dialog.exec()
 
 
+def generate_aligned_html_diff(source_text, target_text, is_dark_mode=False):
+    sm = difflib.SequenceMatcher(None, source_text.splitlines(), target_text.splitlines())
+    left_html, right_html, changes = [], [], []
+    current_line = 0
+
+    # Theme-aware CSS
+    if is_dark_mode:
+        style_del = "background-color: #4a191b; color: #ffb3b3; text-decoration: line-through;"
+        style_add = "background-color: #1a3320; color: #b3ffb3;"
+        style_chg = "background-color: #4d3319; color: #ffd699;"
+        style_pad = "background-color: #2b2b2b;"
+        style_eq = "color: #e0e0e0; background-color: transparent;"
+    else:
+        style_del = "background-color: #ffebee; color: #b71c1c; text-decoration: line-through;"
+        style_add = "background-color: #e8f5e9; color: #1b5e20;"
+        style_chg = "background-color: #fff3e0; color: #e65100;"
+        style_pad = "background-color: #f5f5f5;"
+        style_eq = "color: #333333; background-color: transparent;"
+
+    def format_line(line, style):
+        safe_text = escape(line) if line else "&nbsp;"
+        return f"<pre style='margin: 0; padding: 2px 4px; {style}'>{safe_text}</pre>"
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == 'equal':
+            for line in source_text.splitlines()[i1:i2]:
+                left_html.append(format_line(line, style_eq))
+                right_html.append(format_line(line, style_eq))
+                current_line += 1
+
+        elif tag == 'replace':
+            left_lines = source_text.splitlines()[i1:i2]
+            right_lines = target_text.splitlines()[j1:j2]
+            max_len = max(len(left_lines), len(right_lines))
+
+            for i in range(max_len):
+                if i < len(left_lines):
+                    left_html.append(format_line(left_lines[i], style_chg))
+                else:
+                    left_html.append(format_line("", style_pad))
+
+                if i < len(right_lines):
+                    right_html.append(format_line(right_lines[i], style_chg))
+                else:
+                    right_html.append(format_line("", style_pad))
+
+                changes.append(('change', current_line))
+                current_line += 1
+
+        elif tag == 'delete':
+            for line in source_text.splitlines()[i1:i2]:
+                left_html.append(format_line(line, style_del))
+                right_html.append(format_line("", style_pad))
+                changes.append(('delete', current_line))
+                current_line += 1
+
+        elif tag == 'insert':
+            for line in target_text.splitlines()[j1:j2]:
+                left_html.append(format_line("", style_pad))
+                right_html.append(format_line(line, style_add))
+                changes.append(('insert', current_line))
+                current_line += 1
+
+    return "".join(left_html), "".join(right_html), changes, current_line
+
+
 class CompareSoiDialogController:
     def __init__(self, loaded_ips, project_mgr, parent=None):
         self.project_mgr = project_mgr
@@ -236,6 +347,15 @@ class CompareSoiDialogController:
         ui_file.open(QFile.ReadOnly)
         self.dialog = loader.load(ui_file, parent)
         ui_file.close()
+
+        # Inject the custom ruler directly into the splitter layout
+        self.ruler = DiffRuler(self.dialog)
+        self.dialog.horizontalSplitter.addWidget(self.ruler)
+
+        # Prevent the user from resizing the ruler
+        self.dialog.horizontalSplitter.setStretchFactor(0, 1)  # Left Text
+        self.dialog.horizontalSplitter.setStretchFactor(1, 1)  # Right Text
+        self.dialog.horizontalSplitter.setStretchFactor(2, 0)  # Ruler
 
         self.setup_ui(loaded_ips)
         self.connect_signals()
@@ -272,10 +392,16 @@ class CompareSoiDialogController:
         source_text = self.fetch_soi_text(source_ip)
         target_text = self.fetch_soi_text(target_ip)
 
-        # Apply regex filters or difflib processing here before rendering
+        # Detect the current theme before generating the HTML
+        palette = QApplication.palette()
+        is_dark = palette.color(QPalette.WindowText).lightness() > palette.color(QPalette.Window).lightness()
 
-        self.dialog.textSource.setPlainText(source_text)
-        self.dialog.textTarget.setPlainText(target_text)
+        # Pass the is_dark flag to the generator
+        left_html, right_html, changes, total_lines = generate_aligned_html_diff(source_text, target_text, is_dark)
+
+        self.dialog.textSource.setHtml(left_html)
+        self.dialog.textTarget.setHtml(right_html)
+        self.ruler.update_data(changes, total_lines)
 
         self.dialog.btnGenerateAi.setEnabled(True)
 
