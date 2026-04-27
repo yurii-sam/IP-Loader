@@ -204,33 +204,21 @@
    </widget>
   </widget>
   <action name="actionOpenFolder">
-   <property name="icon">
-    <iconset theme="QIcon::ThemeIcon::FolderVisiting"/>
-   </property>
    <property name="text">
     <string>Open Folder</string>
    </property>
   </action>
   <action name="actionLoadIP">
-   <property name="icon">
-    <iconset theme="document-new"/>
-   </property>
    <property name="text">
     <string>Load IP</string>
    </property>
   </action>
   <action name="actionLoadIRMs">
-   <property name="icon">
-    <iconset theme="system-software-install"/>
-   </property>
    <property name="text">
     <string>Load IRMs</string>
    </property>
   </action>
   <action name="actionLoadSOI">
-   <property name="icon">
-    <iconset theme="QIcon::ThemeIcon::PrinterPrinting"/>
-   </property>
    <property name="text">
     <string>Load SOI</string>
    </property>

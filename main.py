@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
-
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileSystemModel, QFileDialog, QDialog
 from PySide6.QtCore import QThreadPool, QFile, QDir, QStandardPaths, QFileInfo, QUrl
+from PySide6.QtGui import QDesktopServices, QPalette
 from PySide6.QtUiTools import QUiLoader
+
+import qtawesome as qta  # Import the new library
 
 # Custom modules
 from project_manager import ProjectManager
@@ -21,18 +22,21 @@ class ApplicationController:
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.thread_pool = QThreadPool()
-        self.active_irm_dialog = None  # Reference for async callbacks
-        self.current_preview_path = None  # Add this line to track the selected file
+        self.active_irm_dialog = None
+        self.current_preview_path = None
 
         # 1. Load the UI XML
         self.load_ui()
 
-        # 2. Find Documents folder and initialize the Project Manager
+        # 2. Setup standard icons
+        self.setup_icons()
+
+        # 3. Find Documents folder and initialize the Project Manager
         docs_path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
         self.base_projects_dir = QDir(docs_path).filePath("IP_Projects")
         self.project_mgr = ProjectManager(self.base_projects_dir)
 
-        # 3. Setup models and signals
+        # 4. Setup models and signals
         self.setup_models()
         self.connect_signals()
 
@@ -45,6 +49,22 @@ class ApplicationController:
 
         self.window = loader.load(ui_file)
         ui_file.close()
+
+    def setup_icons(self):
+        # Determine if Windows is in dark mode based on the default text color
+        palette = self.app.palette()
+        is_dark_mode = palette.color(QPalette.WindowText).lightness() > palette.color(QPalette.Window).lightness()
+
+        # Pick a clean icon color based on the theme
+        icon_color = '#FFFFFF' if is_dark_mode else '#333333'
+
+        # fa5s = FontAwesome 5 Solid. You can browse their cheat sheet online for names.
+        self.window.actionOpenFolder.setIcon(qta.icon('ph.folder-open', color=icon_color))
+        self.window.actionLoadIP.setIcon(qta.icon('ph.folder-plus', color=icon_color))
+        self.window.actionLoadIRMs.setIcon(qta.icon('ph.cloud-arrow-down', color=icon_color))
+        self.window.actionLoadSOI.setIcon(qta.icon('ph.cloud-arrow-down', color=icon_color))
+        self.window.actionCompareSOI.setIcon(qta.icon('ph.git-diff', color=icon_color))
+
 
     def setup_models(self):
         # Create a default active project so the workspace isn't empty on launch
