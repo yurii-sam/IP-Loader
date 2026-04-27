@@ -1,7 +1,9 @@
 import sys
 from pathlib import Path
+
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QFileSystemModel, QFileDialog, QDialog
-from PySide6.QtCore import QThreadPool, QFile, QDir, QStandardPaths
+from PySide6.QtCore import QThreadPool, QFile, QDir, QStandardPaths, QFileInfo, QUrl
 from PySide6.QtUiTools import QUiLoader
 
 # Custom modules
@@ -20,6 +22,7 @@ class ApplicationController:
         self.app = QApplication(sys.argv)
         self.thread_pool = QThreadPool()
         self.active_irm_dialog = None  # Reference for async callbacks
+        self.current_preview_path = None  # Add this line to track the selected file
 
         # 1. Load the UI XML
         self.load_ui()
@@ -67,12 +70,17 @@ class ApplicationController:
         toggle_log_action.setText("Show Application Log")
         self.window.menuView.addAction(toggle_log_action)
 
+        # Force the splitter to give the preview pane the lion's share of the window
+        self.window.mainSplitter.setSizes([250, 950])
+
     def connect_signals(self):
         self.window.actionOpenFolder.triggered.connect(self.handle_open_folder)
         self.window.actionLoadIP.triggered.connect(self.handle_load_ip)
         self.window.actionLoadIRMs.triggered.connect(self.handle_load_irms)
         self.window.actionLoadSOI.triggered.connect(self.handle_load_soi)
         self.window.actionCompareSOI.triggered.connect(self.handle_compare_soi)
+        self.window.treeView.clicked.connect(self.handle_file_selection)
+        self.window.btnOpenPdf.clicked.connect(self.open_external_pdf)
 
     def log(self, message):
         self.window.logOutput.append(message)
@@ -210,6 +218,41 @@ class ApplicationController:
 
     def on_download_error(self, identifier, error_msg):
         self.window.statusbar.showMessage(f"Error on {identifier}: {error_msg}", 5000)
+
+    def handle_file_selection(self, index):
+        file_path = self.file_system_model.filePath(index)
+        file_info = QFileInfo(file_path)
+
+        if file_info.isDir():
+            return
+
+        self.current_preview_path = file_path
+        extension = file_info.suffix().lower()
+
+        if extension == "html":
+            # Switch to HTML page (index 0)
+            self.window.previewStack.setCurrentIndex(0)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    self.window.htmlPreviewer.setHtml(f.read())
+            except Exception as e:
+                self.window.htmlPreviewer.setPlainText(f"Error reading HTML:\n{str(e)}")
+
+        elif extension == "pdf":
+            # Switch to PDF page (index 1)
+            self.window.previewStack.setCurrentIndex(1)
+            self.window.labelPdfNotice.setText(f"<b>3D PDF Selected:</b><br>{file_info.fileName()}")
+
+        else:
+            # Fallback for unexpected files
+            self.window.previewStack.setCurrentIndex(0)
+            self.window.htmlPreviewer.setHtml(f"<h2>File Selected</h2><p>{file_info.fileName()}</p>")
+
+    def open_external_pdf(self):
+        if self.current_preview_path:
+            # This asks the OS to open the file with whatever default app the user has registered
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.current_preview_path))
+            self.log(f"Opened externally: {QFileInfo(self.current_preview_path).fileName()}")
 
     def run(self):
         self.window.show()

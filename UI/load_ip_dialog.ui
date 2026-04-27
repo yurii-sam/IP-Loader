@@ -17,7 +17,7 @@
    <item>
     <widget class="QLabel" name="label">
      <property name="text">
-      <string>Enter IP Numbers and Line Numbers:</string>
+      <string>Enter IP Numbers (16-30 chars) and Line Numbers (0-9999):</string>
      </property>
     </widget>
    </item>
@@ -68,6 +68,13 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="btnLoadExcel">
+       <property name="text">
+        <string>Load from Excel</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
@@ -101,32 +108,12 @@
    <signal>accepted()</signal>
    <receiver>LoadIpDialog</receiver>
    <slot>accept()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>248</x>
-     <y>254</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>157</x>
-     <y>274</y>
-    </hint>
-   </hints>
   </connection>
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
    <receiver>LoadIpDialog</receiver>
    <slot>reject()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>316</x>
-     <y>260</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>286</x>
-     <y>274</y>
-    </hint>
-   </hints>
   </connection>
  </connections>
 </ui>
