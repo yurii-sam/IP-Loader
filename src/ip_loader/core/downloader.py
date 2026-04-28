@@ -4,7 +4,7 @@ from PySide6.QtCore import QRunnable, QObject, Signal, Slot
 
 # Import your Velocity client
 # Assuming it's in a file named velocity.py
-from velocity import VelocityClient
+from .velocity import VelocityClient
 
 
 class WorkerSignals(QObject):

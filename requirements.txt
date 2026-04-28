@@ -2,3 +2,5 @@ openpyxl
 pyside6
 requests
 qtawesome
+bs4
+lxml
