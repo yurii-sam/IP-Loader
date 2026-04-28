@@ -23,6 +23,160 @@ from PySide6.QtGui import QPainter, QColor, QPalette
 from PySide6.QtCore import QFile, Qt
 from PySide6.QtUiTools import QUiLoader
 
+from PySide6.QtCore import QThread, Signal
+from openai import OpenAI
+
+from src.ip_loader.ui.dialogs.compare_soi import _split_sections, _strip_html
+
+MAX_CHUNK_CHARS = 40_000  # safe for gpt-4.1-mini, ~10k tokens
+
+
+def _build_diff_text(source_raw, target_raw):
+    """Build a plain-text section-by-section diff for the LLM. Only includes changed sections."""
+    src_sections = _split_sections(_strip_html(source_raw))
+    tgt_sections = _split_sections(_strip_html(target_raw))
+    src_titles = [s[0] for s in src_sections]
+    tgt_titles = [t[0] for t in tgt_sections]
+
+    chunks = []  # list of (section_title, diff_text)
+
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, src_titles, tgt_titles, autojunk=False).get_opcodes():
+
+        if op == 'equal':
+            for k in range(i2 - i1):
+                src_s, tgt_s = src_sections[i1+k], tgt_sections[j1+k]
+                title = src_s[0] or '(Preamble)'
+                lines = []
+                for sop, si1, si2, sj1, sj2 in difflib.SequenceMatcher(
+                        None, src_s[1], tgt_s[1], autojunk=False).get_opcodes():
+                    if sop == 'equal':
+                        continue
+                    elif sop == 'delete':
+                        for l in src_s[1][si1:si2]: lines.append(f'- {l}')
+                    elif sop == 'insert':
+                        for l in tgt_s[1][sj1:sj2]: lines.append(f'+ {l}')
+                    elif sop == 'replace':
+                        for l in src_s[1][si1:si2]: lines.append(f'- {l}')
+                        for l in tgt_s[1][sj1:sj2]: lines.append(f'+ {l}')
+                if lines:
+                    chunks.append((title, '\n'.join(lines)))
+
+        elif op == 'delete':
+            for k in range(i2 - i1):
+                src_s = src_sections[i1+k]
+                title = src_s[0] or '(Preamble)'
+                lines = [f'- {l}' for l in src_s[1]]
+                chunks.append((f'[REMOVED] {title}', '\n'.join(lines)))
+
+        elif op == 'insert':
+            for k in range(j2 - j1):
+                tgt_s = tgt_sections[j1+k]
+                title = tgt_s[0] or '(Preamble)'
+                lines = [f'+ {l}' for l in tgt_s[1]]
+                chunks.append((f'[NEW] {title}', '\n'.join(lines)))
+
+        elif op == 'replace':
+            for k in range(max(i2-i1, j2-j1)):
+                src_s = src_sections[i1+k] if k < (i2-i1) else (None, [])
+                tgt_s = tgt_sections[j1+k] if k < (j2-j1) else (None, [])
+                title = src_s[0] or tgt_s[0] or '(Preamble)'
+                lines = [f'- {l}' for l in src_s[1]] + [f'+ {l}' for l in tgt_s[1]]
+                chunks.append((f'[REPLACED] {title}', '\n'.join(lines)))
+
+    return chunks  # [(title, diff_text), ...]
+
+
+class AiSummaryWorker(QThread):
+    finished = Signal(str)
+    error    = Signal(str)
+
+    def __init__(self, source_text, target_text, api_key, parent=None):
+        super().__init__(parent)
+        self.source_text = source_text
+        self.target_text = target_text
+        self.api_key     = api_key
+
+    def run(self):
+        try:
+            client = OpenAI(api_key=self.api_key)
+            chunks = _build_diff_text(self.source_text, self.target_text)
+
+            if not chunks:
+                self.finished.emit("<p>No differences found between the two SOIs.</p>")
+                return
+
+            SYSTEM = (
+                "You are a technical analyst reviewing changes between two Shop Order Instance (SOI) documents. "
+                "Each section is prefixed with its operation name. Lines starting with '-' were removed, "
+                "'+' were added. Summarize what changed clearly and concisely in plain English. "
+                "Group related changes. Highlight anything safety-critical or significant."
+            )
+
+            # Pack sections into chunks ≤ MAX_CHUNK_CHARS
+            batches, current, current_len = [], [], 0
+            for title, diff in chunks:
+                block = f"=== {title} ===\n{diff}\n"
+                if current and current_len + len(block) > MAX_CHUNK_CHARS:
+                    batches.append('\n'.join(current))
+                    current, current_len = [], 0
+                current.append(block)
+                current_len += len(block)
+                if current:
+                    batches.append('\n'.join(current))
+
+            if len(batches) == 1:
+                # Single shot
+                reply = self._call(client, SYSTEM, batches[0])
+                self.finished.emit(self._to_html(reply))
+            else:
+                # Summarize each batch, then meta-summarize
+                partials = []
+                for i, batch in enumerate(batches):
+                    prompt = f"Part {i+1}/{len(batches)} of the diff:\n\n{batch}"
+                    partials.append(self._call(client, SYSTEM, prompt))
+
+                meta_prompt = (
+                    "You received partial summaries of a large SOI diff. "
+                    "Combine them into one coherent final summary:\n\n" +
+                    '\n\n---\n\n'.join(partials)
+                )
+                final = self._call(client, SYSTEM, meta_prompt)
+                self.finished.emit(self._to_html(final))
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _call(self, client, system, user):
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
+            temperature=0.2,
+        )
+        return resp.choices[0].message.content
+
+    @staticmethod
+    def _to_html(text):
+        lines = []
+        for line in text.splitlines():
+            line = html_mod.escape(line)
+            if line.startswith('##'):
+                lines.append(f'<h3>{line.lstrip("#").strip()}</h3>')
+            elif line.startswith('#'):
+                lines.append(f'<h2>{line.lstrip("#").strip()}</h2>')
+            elif line.startswith('- ') or line.startswith('* '):
+                lines.append(f'<li>{line[2:]}</li>')
+            elif line == '':
+                lines.append('<br>')
+            else:
+                lines.append(f'<p>{line}</p>')
+        return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;line-height:1.6">' \
+               + ''.join(lines) + '</div>'
+
+
 
 class DiffRuler(QWidget):
     def __init__(self, parent=None):
@@ -414,6 +568,8 @@ class CompareSoiDialogController:
         self.dialog.textTarget.setHtml(right_html)
         self.ruler.update_data(changes, total_lines)
         self.dialog.btnGenerateAi.setEnabled(True)
+
+
 
     def generate_ai_summary(self):
         self.dialog.btnGenerateAi.setEnabled(False)
