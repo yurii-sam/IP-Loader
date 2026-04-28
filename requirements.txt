@@ -1,0 +1,4 @@
+openpyxl
+pyside6
+requests
+qtawesome
