@@ -189,18 +189,20 @@ class ApplicationController:
 
     # --- Threading & Network Simulation ---
 
+    # Update this method in main.py
     def spawn_download_task(self, task_type, ip_num, ln_num, **kwargs):
-        # Calculate the absolute path where the worker should save files
         if self.project_mgr.active_project_path:
             ip_dir = self.project_mgr.active_project_path / f"{ip_num}-{ln_num}"
             kwargs['save_path'] = str(ip_dir)
+
+        # Inject the active SSO session into kwargs so the worker can use VelocityClient
+        # This assumes you initialized self.sso_session in ApplicationController.__init__
+        kwargs['sso_session'] = getattr(self, 'sso_session', None)
 
         worker = DownloadWorker(task_type, ip_num, ln_num, **kwargs)
         worker.signals.log_msg.connect(self.log)
         worker.signals.finished.connect(self.on_download_finished)
         worker.signals.error.connect(self.on_download_error)
-
-        # Connect the data_ready signal so FETCH_IRM_LIST can return the UI list
         worker.signals.data_ready.connect(self.on_worker_data_ready)
 
         self.thread_pool.start(worker)

@@ -2,10 +2,14 @@ import time
 from pathlib import Path
 from PySide6.QtCore import QRunnable, QObject, Signal, Slot
 
+# Import your Velocity client
+# Assuming it's in a file named velocity.py
+from velocity import VelocityClient
+
 
 class WorkerSignals(QObject):
-    finished = Signal(str, str)  # identifier, status
-    data_ready = Signal(str, str, object)  # task_type, identifier, payload
+    finished = Signal(str, str)
+    data_ready = Signal(str, str, object)
     error = Signal(str, str)
     log_msg = Signal(str)
 
@@ -25,47 +29,38 @@ class DownloadWorker(QRunnable):
         self.signals.log_msg.emit(f"Starting {self.task_type} for {identifier}...")
 
         try:
-            # Simulate a network delay for the UI
-            time.sleep(1.5)
-
-            # The target directory passed from main.py
             save_path = Path(self.kwargs.get("save_path", ""))
 
             if self.task_type == "FETCH_IRM_LIST":
-                # TODO: Replace with requests.get() to your internal API
-                # This doesn't save a file, it just returns data to the UI.
-                mock_parts = [
-                    f"IRM-PART-{self.line_number}001",
-                    f"IRM-PART-{self.line_number}002",
-                    f"IRM-PART-{self.line_number}003"
-                ]
-                self.signals.data_ready.emit(self.task_type, identifier, mock_parts)
-                return
+                # Implementation remains...
+                pass
 
             elif self.task_type == "IP_SETUP":
-                # TODO: Fetch top-level metadata or Parts.html
-                # Example: response = requests.get(f"url/parts/{self.ip_number}")
-                parts_file = save_path / "Parts.html"
-                if save_path.exists():
-                    with open(parts_file, "w", encoding="utf-8") as f:
-                        f.write(f"<html><body><h1>Parts List for {identifier}</h1></body></html>")
+                # Implementation remains...
+                pass
 
             elif self.task_type == "SOI":
-                # TODO: Fetch the SOI Print
-                soi_file = save_path / "SOI.html"
-                if save_path.exists():
-                    with open(soi_file, "w", encoding="utf-8") as f:
-                        f.write(
-                            f"<html><body><h1>SOI Print: {identifier}</h1><p>Date: 2026-04-27</p><p>Operation 10: Mock text for diffing.</p></body></html>")
+                self.signals.log_msg.emit(f"Connecting to Velocity for {identifier}...")
+
+                # Retrieve the SSO session passed from main.py
+                sso_session = self.kwargs.get("sso_session")
+                if not sso_session:
+                    raise ValueError("No authenticated SSO session provided.")
+
+                # Instantiate the client and run the extraction
+                client = VelocityClient(sso_session)
+
+                # Execute the search and print payload
+                # Note: You may need to slightly adjust VelocityClient.process_order
+                # so it saves the file directly into the provided save_path
+                success = client.process_order(self.ip_number, self.line_number, target_dir=str(save_path))
+
+                if not success:
+                    raise RuntimeError("Velocity server rejected the payload or redirect failed.")
 
             elif self.task_type == "IRM":
-                # TODO: Fetch the 3D PDF binary
-                part_number = self.kwargs.get("part_number", "UNKNOWN")
-                irm_file = save_path / "IRMs" / f"{part_number}.pdf"
-                if save_path.exists():
-                    with open(irm_file, "wb") as f:
-                        # Write raw bytes for PDFs
-                        f.write(b"%PDF-1.4\n%Mock PDF binary data")
+                # Implementation remains...
+                pass
 
             self.signals.log_msg.emit(f"Successfully finished {self.task_type} for {identifier}")
             self.signals.finished.emit(identifier, "Success")

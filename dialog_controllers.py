@@ -227,6 +227,12 @@ class LoadSoiDialogController:
         return self.dialog.exec()
 
 
+import re
+from PySide6.QtWidgets import QDialogButtonBox
+from PySide6.QtCore import QFile, Qt
+from PySide6.QtUiTools import QUiLoader
+
+
 class CompareSoiDialogController:
     def __init__(self, loaded_ips, project_mgr, parent=None):
         self.project_mgr = project_mgr
@@ -253,6 +259,7 @@ class CompareSoiDialogController:
         self.dialog.btnRunDiff.clicked.connect(self.run_diff)
         self.dialog.btnGenerateAi.clicked.connect(self.generate_ai_summary)
 
+        # Synchronize the vertical scrolling of both rendered HTML pages
         scroll_source = self.dialog.textSource.verticalScrollBar()
         scroll_target = self.dialog.textTarget.verticalScrollBar()
 
@@ -262,6 +269,29 @@ class CompareSoiDialogController:
     def fetch_soi_text(self, ip_ln):
         return self.project_mgr.get_soi_text(ip_ln)
 
+    def clean_html_for_render(self, html_text):
+        """
+        Aggressively strips invisible legacy garbage so the QTextBrowser
+        doesn't waste memory rendering massive blocks of hidden data.
+        """
+        if not html_text:
+            return ""
+
+        # Nuke all HTML comments
+        html_text = re.sub(r'', '', html_text)
+
+        # Nuke custom XML tags like <RevisionHistory>
+        html_text = re.sub(r'<RevisionHistory[\s\S]*?</RevisionHistory>', '', html_text, flags=re.IGNORECASE)
+
+        # Nuke inline JavaScript (QTextBrowser ignores it anyway, but it saves memory)
+        html_text = re.sub(r'<script[\s\S]*?</script>', '', html_text, flags=re.IGNORECASE)
+
+        # Nuke massive ASP.NET state variables
+        html_text = re.sub(r'<input type="hidden" name="__VIEWSTATE.*?>', '', html_text, flags=re.IGNORECASE)
+        html_text = re.sub(r'<input type="hidden" name="__EVENTVALIDATION.*?>', '', html_text, flags=re.IGNORECASE)
+
+        return html_text
+
     def run_diff(self):
         source_ip = self.dialog.comboSource.currentText()
         target_ip = self.dialog.comboTarget.currentText()
@@ -269,21 +299,24 @@ class CompareSoiDialogController:
         if not source_ip or not target_ip:
             return
 
+        # Fetch the raw HTML files
         source_text = self.fetch_soi_text(source_ip)
         target_text = self.fetch_soi_text(target_ip)
 
-        # Apply regex filters or difflib processing here before rendering
+        # Scrub the garbage
+        source_clean = self.clean_html_for_render(source_text)
+        target_clean = self.clean_html_for_render(target_text)
 
-        self.dialog.textSource.setPlainText(source_text)
-        self.dialog.textTarget.setPlainText(target_text)
+        # Render the HTML directly into the standard QTextBrowsers
+        self.dialog.textSource.setHtml(source_clean)
+        self.dialog.textTarget.setHtml(target_clean)
 
         self.dialog.btnGenerateAi.setEnabled(True)
 
     def generate_ai_summary(self):
         self.dialog.btnGenerateAi.setEnabled(False)
         self.dialog.textAiSummary.setHtml("<i>Contacting LLM... Generating summary of changes...</i>")
-
-        # Fire off the worker to handle the LLM API call
+        # TODO: Fire off the worker to handle the LLM API call
 
     def exec(self):
         return self.dialog.exec()
