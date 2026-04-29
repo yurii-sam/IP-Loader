@@ -19,9 +19,12 @@ class ProjectManager:
         return False
 
     def create_new_project(self, project_name=None):
-        """Creates a new Project-Date folder."""
-        date_str = time.strftime("%Y-%m-%d")
-        name = f"{project_name}-{date_str}" if project_name else f"Project-{date_str}"
+        """Creates a new Project folder."""
+        if project_name:
+            name = project_name
+        else:
+            date_str = time.strftime("%Y-%m-%d")
+            name = f"Project-{date_str}"
 
         new_dir = self.base_path / name
         new_dir.mkdir(parents=True, exist_ok=True)

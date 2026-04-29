@@ -7,7 +7,8 @@ from PySide6.QtUiTools import QUiLoader
 from .base import VIEWS_DIR
 
 class LoadIpDialogController:
-    def __init__(self, parent=None):
+    def __init__(self, defaults=None, parent=None):
+        self.defaults = defaults or {"load_irms": False, "load_soi": False}
         loader = QUiLoader()
         ui_path = VIEWS_DIR / "load_ip_dialog.ui"
         ui_file = QFile(str(ui_path))
@@ -48,12 +49,12 @@ class LoadIpDialogController:
 
         irm_check = QTableWidgetItem()
         irm_check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        irm_check.setCheckState(Qt.Unchecked)
+        irm_check.setCheckState(Qt.Checked if self.defaults.get("load_irms") else Qt.Unchecked)
         self.dialog.tableWidget.setItem(row_count, 2, irm_check)
 
         soi_check = QTableWidgetItem()
         soi_check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        soi_check.setCheckState(Qt.Unchecked)
+        soi_check.setCheckState(Qt.Checked if self.defaults.get("load_soi") else Qt.Unchecked)
         self.dialog.tableWidget.setItem(row_count, 3, soi_check)
 
     def remove_selected_row(self):
